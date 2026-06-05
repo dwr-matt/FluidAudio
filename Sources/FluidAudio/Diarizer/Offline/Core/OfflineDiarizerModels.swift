@@ -14,6 +14,18 @@ public struct OfflineDiarizerModels: Sendable {
 
     private static let logger = AppLogger(category: "OfflineDiarizerModels")
 
+    /// Known top-level entries in the offline diarizer HuggingFace repo.
+    /// Passed to `DownloadUtils.loadModels` to skip the root listing API call.
+    static let knownRepoEntries: [DownloadUtils.RepoEntry] = [
+        (path: "wespeaker_v2.mlmodelc", type: "directory", size: -1),
+        (path: "pyannote_segmentation.mlmodelc", type: "directory", size: -1),
+        (path: "plda-parameters.json", type: "file", size: -1),
+        (path: "xvector-transform.json", type: "file", size: -1),
+        (path: "FBank.mlmodelc", type: "directory", size: -1),
+        (path: "PLDA.mlmodelc", type: "directory", size: -1),
+        (path: "PldaRho.mlmodelc", type: "directory", size: -1),
+    ]
+
     private static func loadPLDAPsi(from directory: URL) throws -> [Double] {
         let candidatePaths = [
             directory.appendingPathComponent("plda-parameters.json", isDirectory: false),
@@ -99,6 +111,7 @@ public struct OfflineDiarizerModels: Sendable {
             directory: modelsDirectory,
             computeUnits: inferenceComputeUnits,
             variant: "offline",
+            knownRootEntries: Self.knownRepoEntries,
             progressHandler: progressHandler
         )
 
@@ -119,6 +132,7 @@ public struct OfflineDiarizerModels: Sendable {
             directory: modelsDirectory,
             computeUnits: fbankComputeUnits,
             variant: "offline",
+            knownRootEntries: Self.knownRepoEntries,
             progressHandler: progressHandler
         )
         guard let fbank = fbankModels[ModelNames.OfflineDiarizer.fbankPath] else {

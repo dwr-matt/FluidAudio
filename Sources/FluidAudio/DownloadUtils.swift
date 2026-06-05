@@ -123,6 +123,10 @@ public class DownloadUtils {
         }
     }
 
+    /// A known top-level entry in a HuggingFace repository tree.
+    /// Passing an array of these to `downloadRepo` skips the root listing API call.
+    public typealias RepoEntry = (path: String, type: String, size: Int)
+
     /// Phase of a model download operation.
     public enum DownloadPhase: Sendable {
         /// Listing files from the remote repository.
@@ -168,6 +172,7 @@ public class DownloadUtils {
         directory: URL,
         computeUnits: MLComputeUnits = .cpuAndNeuralEngine,
         variant: String? = nil,
+        knownRootEntries: [RepoEntry]? = nil,
         progressHandler: ProgressHandler? = nil
     ) async throws -> [String: MLModel] {
         await SystemInfo.logOnce(using: logger)
@@ -175,6 +180,7 @@ public class DownloadUtils {
             return try await loadModelsOnce(
                 repo, modelNames: modelNames,
                 directory: directory, computeUnits: computeUnits, variant: variant,
+                knownRootEntries: knownRootEntries,
                 progressHandler: progressHandler)
         } catch {
             // In offline mode never delete cache + re-download. Surface
@@ -209,6 +215,7 @@ public class DownloadUtils {
             return try await loadModelsOnce(
                 repo, modelNames: modelNames,
                 directory: directory, computeUnits: computeUnits, variant: variant,
+                knownRootEntries: knownRootEntries,
                 progressHandler: progressHandler)
         }
     }
@@ -256,6 +263,7 @@ public class DownloadUtils {
         directory: URL,
         computeUnits: MLComputeUnits = .cpuAndNeuralEngine,
         variant: String? = nil,
+        knownRootEntries: [RepoEntry]? = nil,
         progressHandler: ProgressHandler? = nil
     ) async throws -> [String: MLModel] {
         await SystemInfo.logOnce(using: logger)
@@ -291,6 +299,7 @@ public class DownloadUtils {
             try await downloadRepo(
                 repo, to: directory, variant: variant,
                 additionalModelNames: extraModelNames,
+                knownRootEntries: knownRootEntries,
                 progressHandler: progressHandler)
         } else {
             logger.info("Found \(repo.folderName) locally, no download needed")
@@ -371,6 +380,7 @@ public class DownloadUtils {
         to directory: URL,
         variant: String? = nil,
         additionalModelNames: Set<String> = [],
+        knownRootEntries: [RepoEntry]? = nil,
         progressHandler: ProgressHandler? = nil
     ) async throws {
         try ensureOnlineAllowed("downloadRepo(\(repo.folderName))")
@@ -396,25 +406,31 @@ public class DownloadUtils {
         // Get all files recursively using HuggingFace API
         var filesToDownload: [(path: String, size: Int)] = []
 
-        func listDirectory(path: String) async throws {
-            let apiPath = path.isEmpty ? "tree/main" : "tree/main/\(path)"
-            let dirURL = try ModelRegistry.apiModels(repo.remotePath, apiPath)
-            let request = authorizedRequest(url: dirURL)
+        func listDirectory(path: String, preloadedItems: [[String: Any]]? = nil) async throws {
+            let items: [[String: Any]]
+            if let preloaded = preloadedItems {
+                items = preloaded
+            } else {
+                let apiPath = path.isEmpty ? "tree/main" : "tree/main/\(path)"
+                let dirURL = try ModelRegistry.apiModels(repo.remotePath, apiPath)
+                let request = authorizedRequest(url: dirURL)
 
-            let (dirData, response) = try await sharedSession.data(for: request)
+                let (dirData, response) = try await sharedSession.data(for: request)
 
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 429 || httpResponse.statusCode == 503 {
-                    throw HuggingFaceDownloadError.rateLimited(
-                        statusCode: httpResponse.statusCode, message: "Rate limited while listing files")
+                if let httpResponse = response as? HTTPURLResponse {
+                    if httpResponse.statusCode == 429 || httpResponse.statusCode == 503 {
+                        throw HuggingFaceDownloadError.rateLimited(
+                            statusCode: httpResponse.statusCode, message: "Rate limited while listing files")
+                    }
                 }
-            }
 
-            // Validate that response is JSON, not HTML error page
-            try validateJSONResponse(dirData, path: path)
+                // Validate that response is JSON, not HTML error page
+                try validateJSONResponse(dirData, path: path)
 
-            guard let items = try JSONSerialization.jsonObject(with: dirData) as? [[String: Any]] else {
-                throw HuggingFaceDownloadError.invalidResponse
+                guard let parsed = try JSONSerialization.jsonObject(with: dirData) as? [[String: Any]] else {
+                    throw HuggingFaceDownloadError.invalidResponse
+                }
+                items = parsed
             }
 
             for item in items {
@@ -491,9 +507,18 @@ public class DownloadUtils {
             }
         }
 
-        // Start listing from subPath if specified, otherwise from root
+        // Start listing from subPath if specified, otherwise from root.
+        // When knownRootEntries is provided and there is no subPath, use them directly
+        // to skip the root-level HuggingFace listing API call.
         progressHandler?(DownloadProgress(fractionCompleted: 0.0, phase: .listing))
-        try await listDirectory(path: subPath ?? "")
+        if let entries = knownRootEntries, subPath == nil {
+            let preloaded = entries.map {
+                ["path": $0.path, "type": $0.type, "size": $0.size] as [String: Any]
+            }
+            try await listDirectory(path: "", preloadedItems: preloaded)
+        } else {
+            try await listDirectory(path: subPath ?? "")
+        }
 
         // Some subPath repos keep shared auxiliary files (e.g. vocab.json) at the
         // repo *root* rather than inside the precision subdirectory — the bundled

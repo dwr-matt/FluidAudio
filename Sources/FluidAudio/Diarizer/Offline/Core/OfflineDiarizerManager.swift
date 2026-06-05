@@ -26,10 +26,12 @@ public final class OfflineDiarizerManager {
     ///   - directory: Custom cache directory. Defaults to `OfflineDiarizerModels.defaultModelsDirectory()`.
     ///   - configuration: Optional CoreML configuration to use during compilation.
     ///   - forceRedownload: When `true`, the cached repo is deleted before attempting to load.
+    ///   - progressHandler: Optional callback reporting download and compilation progress.
     public func prepareModels(
         directory: URL? = nil,
         configuration: MLModelConfiguration? = nil,
-        forceRedownload: Bool = false
+        forceRedownload: Bool = false,
+        progressHandler: DownloadUtils.ProgressHandler? = nil
     ) async throws {
         if !forceRedownload, models != nil {
             logger.debug("Offline diarizer models already prepared; skipping load")
@@ -52,7 +54,8 @@ public final class OfflineDiarizerManager {
         do {
             let loadedModels = try await OfflineDiarizerModels.load(
                 from: targetDirectory,
-                configuration: configuration
+                configuration: configuration,
+                progressHandler: progressHandler
             )
             initialize(models: loadedModels)
             await prewarmModelsIfNeeded(loadedModels)
@@ -72,7 +75,8 @@ public final class OfflineDiarizerManager {
             do {
                 let reloadedModels = try await OfflineDiarizerModels.load(
                     from: targetDirectory,
-                    configuration: configuration
+                    configuration: configuration,
+                    progressHandler: progressHandler
                 )
                 initialize(models: reloadedModels)
                 await prewarmModelsIfNeeded(reloadedModels)
