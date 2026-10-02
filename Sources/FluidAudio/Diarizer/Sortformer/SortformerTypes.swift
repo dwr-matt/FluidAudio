@@ -19,8 +19,9 @@ public struct SortformerConfig: Sendable {
     /// it does not affect tensor shapes and has no bearing on `isCompatible`.
     public var precision: ModelNames.Sortformer.ModelPrecision
 
-    /// Number of speaker slots (fixed at 4 for current model)
-    public let numSpeakers: Int = 4
+    /// Number of speaker slots the model predicts.
+    /// Must match the model's speaker head: 4 for NVIDIA's models, more for extended ones.
+    public let numSpeakers: Int
 
     /// Pre-encoder embedding dimension
     public let preEncoderDims: Int = 512
@@ -219,6 +220,7 @@ public struct SortformerConfig: Sendable {
     public init(
         modelVariant: ModelVariant? = .fastV2_1,
         precision: ModelNames.Sortformer.ModelPrecision = .fp16,
+        numSpeakers: Int = 4,
         chunkLen: Int = 6,
         chunkLeftContext: Int = 1,
         chunkRightContext: Int = 7,
@@ -236,6 +238,7 @@ public struct SortformerConfig: Sendable {
     ) {
         self.modelVariant = modelVariant
         self.precision = precision
+        self.numSpeakers = max(1, numSpeakers)
         self.chunkLen = max(1, chunkLen)
         self.chunkLeftContext = chunkLeftContext
         self.chunkRightContext = chunkRightContext
@@ -257,7 +260,7 @@ public struct SortformerConfig: Sendable {
     public func isCompatible(with other: SortformerConfig) -> Bool {
         return
             (self.chunkMelFrames == other.chunkMelFrames && self.fifoLen == other.fifoLen
-            && self.spkcacheLen == other.spkcacheLen)
+            && self.spkcacheLen == other.spkcacheLen && self.numSpeakers == other.numSpeakers)
     }
 }
 
@@ -407,10 +410,10 @@ public struct StreamingUpdateResult: Sendable {
     public let numSpeakers: Int
 
     /// Number of confirmed frames
-    public var confirmedFrameCount: Int { confirmed.count / numSpeakers }  // Assumes 4 speakers
+    public var confirmedFrameCount: Int { confirmed.count / numSpeakers }
 
     /// Number of tentative frames
-    public var tentativeFrameCount: Int { tentative.count / numSpeakers }  // Assumes 4 speakers
+    public var tentativeFrameCount: Int { tentative.count / numSpeakers }
 
     public init(confirmed: [Float], tentative: [Float], numSpeakers: Int = 4) {
         self.confirmed = confirmed

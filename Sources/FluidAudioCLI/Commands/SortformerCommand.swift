@@ -42,6 +42,7 @@ enum SortformerCommand {
         var weakBoostRate: Float?
         var minPosScoresRate: Float?
         var spkcacheSilFramesPerSpk: Int?
+        var numSpeakers: Int?
         var configName = "default"
         var palettized = false
         var offline = false
@@ -137,6 +138,11 @@ enum SortformerCommand {
                     minPosScoresRate = v
                     i += 1
                 }
+            case "--num-speakers":
+                if i + 1 < arguments.count, let v = Int(arguments[i + 1]) {
+                    numSpeakers = v
+                    i += 1
+                }
             case "--spkcache-sil-frames":
                 if i + 1 < arguments.count, let v = Int(arguments[i + 1]) {
                     spkcacheSilFramesPerSpk = v
@@ -183,6 +189,19 @@ enum SortformerCommand {
         default:
             config = .default
         }
+        if let numSpeakers {
+            config = SortformerConfig(
+                modelVariant: config.modelVariant,
+                precision: config.precision,
+                numSpeakers: numSpeakers,
+                chunkLen: config.chunkLen,
+                chunkLeftContext: config.chunkLeftContext,
+                chunkRightContext: config.chunkRightContext,
+                fifoLen: config.fifoLen,
+                spkcacheLen: config.spkcacheLen,
+                spkcacheUpdatePeriod: config.spkcacheUpdatePeriod
+            )
+        }
         var postConfig = DiarizerTimelineConfig.sortformerDefault
         config.debugMode = debugMode
         if palettized { config.precision = .palettized }
@@ -208,8 +227,16 @@ enum SortformerCommand {
             let computeUnits = Self.parseComputeUnits(computeUnitsName)
             if let modelPath = modelPath {
                 print("Loading models from local path: \(modelPath)")
-                models = try await SortformerModels.load(
-                    config: config, mainModelPath: URL(fileURLWithPath: modelPath), computeUnits: computeUnits)
+                if modelPath.hasSuffix(".mlmodelc") {
+                    // A compiled model is loaded as is, rather than compiled again like a package.
+                    let modelConfiguration = MLModelConfiguration()
+                    modelConfiguration.computeUnits = computeUnits ?? .all
+                    let main = try MLModel(contentsOf: URL(fileURLWithPath: modelPath), configuration: modelConfiguration)
+                    models = try SortformerModels(config: config, main: main)
+                } else {
+                    models = try await SortformerModels.load(
+                        config: config, mainModelPath: URL(fileURLWithPath: modelPath), computeUnits: computeUnits)
+                }
             } else {
                 print("Loading models from HuggingFace...")
                 models = try await SortformerModels.loadFromHuggingFace(
@@ -460,6 +487,7 @@ enum SortformerCommand {
                 --weak-boost-rate <fl>      Weak boost rate (default: 1.5)
                 --min-pos-scores-rate <0-1> Minimum positive scores rate (default: 0.5)
                 --spkcache-sil-frames <n>   Silence frames per speaker in cache (default: 3)
+                --num-speakers <n>          Speaker slots the model predicts (default: 4)
 
             Examples:
                 # Basic usage (downloads model from HuggingFace)
